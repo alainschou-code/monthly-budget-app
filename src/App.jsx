@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   PieChart,
   Pie,
@@ -220,6 +220,66 @@ async function askGemini(question, apiKey, contextSummary) {
   return text.trim() || "（沒有取得回應，請再試一次）";
 }
 
+// ---- Google Drive 同步 ----
+// 使用 drive.file 範圍：這個範圍只能存取「這個 App 自己建立的檔案」，
+// 不會讓 App 看到使用者 Drive 裡的其他檔案。
+const GOOGLE_CLIENT_ID = "439065297376-ljt9eueqqijqphmo6v15knm10g7d7qkf.apps.googleusercontent.com";
+const GOOGLE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FILE_NAME = "monthly-budget-data.json";
+
+async function driveFetch(token, url, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Google Drive API 錯誤（${res.status}）。${text ? text.slice(0, 200) : ""}`);
+  }
+  return res;
+}
+
+async function findDriveFile(token) {
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await driveFetch(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+  const data = await res.json();
+  return data.files && data.files.length > 0 ? data.files[0].id : null;
+}
+
+async function createDriveFile(token, payload) {
+  const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json" };
+  const boundary = "-------monthlybudgetboundary";
+  const body =
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(payload)}\r\n` +
+    `--${boundary}--`;
+  const res = await driveFetch(token, "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+    method: "POST",
+    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  const data = await res.json();
+  return data.id;
+}
+
+async function readDriveFile(token, fileId) {
+  const res = await driveFetch(token, `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function updateDriveFile(token, fileId, payload) {
+  await driveFetch(token, `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export default function App() {
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
   const [assets, setAssets] = useState(DEFAULT_ASSETS);
@@ -229,6 +289,12 @@ export default function App() {
   const [anthropicKey, setAnthropicKey] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
   const [aiProvider, setAiProvider] = useState("claude");
+  const [accessToken, setAccessToken] = useState(null);
+  const [driveFileId, setDriveFileId] = useState(null);
+  const [driveSyncStatus, setDriveSyncStatus] = useState("idle"); // idle | syncing | synced | error
+  const tokenClientRef = useRef(null);
+  const driveHasLoadedRef = useRef(false);
+  const driveSaveTimerRef = useRef(null);
 
   // 讀取本機儲存的資料（localStorage，僅存在於這個瀏覽器）
   useEffect(() => {
@@ -414,6 +480,90 @@ export default function App() {
     setAssets(next);
   }
 
+  function ensureTokenClient() {
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+      throw new Error("Google 登入元件尚未載入完成，請重新整理頁面後再試一次。");
+    }
+    if (!tokenClientRef.current) {
+      tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_SCOPE,
+        callback: (response) => {
+          if (response.error) {
+            setDriveSyncStatus("error");
+            return;
+          }
+          driveHasLoadedRef.current = false;
+          setAccessToken(response.access_token);
+        },
+      });
+    }
+    return tokenClientRef.current;
+  }
+
+  function signInWithGoogle() {
+    try {
+      ensureTokenClient().requestAccessToken();
+    } catch (e) {
+      setDriveSyncStatus("error");
+      alert(e.message);
+    }
+  }
+
+  function signOutGoogle() {
+    if (accessToken && window.google?.accounts?.oauth2?.revoke) {
+      window.google.accounts.oauth2.revoke(accessToken, () => {});
+    }
+    setAccessToken(null);
+    setDriveFileId(null);
+    setDriveSyncStatus("idle");
+    driveHasLoadedRef.current = false;
+  }
+
+  // 登入後：找到（或建立）Drive 上的資料檔，並讀取最新資料
+  useEffect(() => {
+    if (!accessToken) return;
+    (async () => {
+      setDriveSyncStatus("syncing");
+      try {
+        let fileId = await findDriveFile(accessToken);
+        if (!fileId) {
+          fileId = await createDriveFile(accessToken, { template, assets, monthsData });
+        } else {
+          const driveData = await readDriveFile(accessToken, fileId);
+          if (driveData) {
+            if (driveData.template) setTemplate(driveData.template);
+            if (driveData.assets) setAssets(driveData.assets);
+            if (driveData.monthsData) setMonthsData(driveData.monthsData);
+          }
+        }
+        setDriveFileId(fileId);
+        setDriveSyncStatus("synced");
+        driveHasLoadedRef.current = true;
+      } catch (e) {
+        setDriveSyncStatus("error");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // 資料變動後，若已登入且已完成第一次讀取，自動同步回 Drive（延遲避免頻繁呼叫）
+  useEffect(() => {
+    if (!accessToken || !driveFileId || !driveHasLoadedRef.current) return;
+    if (driveSaveTimerRef.current) clearTimeout(driveSaveTimerRef.current);
+    driveSaveTimerRef.current = setTimeout(async () => {
+      setDriveSyncStatus("syncing");
+      try {
+        await updateDriveFile(accessToken, driveFileId, { template, assets, monthsData });
+        setDriveSyncStatus("synced");
+      } catch (e) {
+        setDriveSyncStatus("error");
+      }
+    }, 1500);
+    return () => clearTimeout(driveSaveTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template, assets, monthsData]);
+
   const aiContext = useMemo(() => {
     const lines = [
       `月份：${monthLabel(currentMonth)}`,
@@ -508,7 +658,31 @@ export default function App() {
               <ChevronRight size={20} />
             </button>
           </div>
-          <div style={{ textAlign: "center", fontSize: 11, color: "#B0B0B5", marginTop: 10 }}>資料已自動儲存在此瀏覽器</div>
+          <div style={{ textAlign: "center", marginTop: 10 }}>
+            {accessToken ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: driveSyncStatus === "error" ? "#FF3B30" : driveSyncStatus === "syncing" ? "#FF9F0A" : "#34C759",
+                  }}
+                >
+                  {driveSyncStatus === "syncing" ? "同步中…" : driveSyncStatus === "error" ? "同步失敗，稍後再試" : "已同步 Google 雲端硬碟"}
+                </span>
+                <span style={{ color: "#D2D2D7" }}>·</span>
+                <button onClick={signOutGoogle} style={{ fontSize: 11, color: "#0071E3", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                  登出
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 11, color: "#B0B0B5", marginBottom: 4 }}>資料已自動儲存在此瀏覽器</div>
+                <button onClick={signInWithGoogle} style={{ fontSize: 11, color: "#0071E3", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                  用 Google 帳號登入，跨裝置同步到雲端硬碟
+                </button>
+              </div>
+            )}
+          </div>
         </header>
 
         <main style={{ padding: "24px 20px 0" }}>
