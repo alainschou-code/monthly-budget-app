@@ -856,6 +856,34 @@ function AmountRow({ label, value, onChange, onRemove, note }) {
   );
 }
 
+function ReadOnlyAmountRow({ label, value, note }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
+      <div style={{ flex: 1, overflow: "hidden" }}>
+        <div style={{ fontSize: 13.5, color: "#1D1D1F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+        {note && <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 1 }}>{note}</div>}
+      </div>
+      <span style={{ fontSize: 12.5, color: "#6E6E73" }}>NT$</span>
+      <div
+        style={{
+          width: 100,
+          textAlign: "right",
+          border: "1px solid #F0F0F2",
+          borderRadius: 8,
+          padding: "6px 8px",
+          fontSize: 14,
+          fontWeight: 600,
+          color: "#6E6E73",
+          background: "#F5F5F7",
+          boxSizing: "border-box",
+        }}
+      >
+        {formatMoney(value)}
+      </div>
+    </div>
+  );
+}
+
 function DividendRow({ code, amount, options, onCodeChange, onAmountChange, isLast }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: isLast ? "none" : "1px solid #F0F0F2", gap: 8 }}>
@@ -954,6 +982,7 @@ function HomeView({
                 onRemove={template.income.length > 1 ? () => onRemoveIncomeItem(item.id) : undefined}
               />
             ))}
+            <ReadOnlyAmountRow label="股票配息" value={dividendTotal} note="自動加總下方「股息」卡片" />
             <AddItemRow placeholder="新增收入項目" onAdd={onAddIncomeItem} />
           </ItemGroupCard>
 
