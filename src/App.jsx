@@ -69,7 +69,7 @@ const DEFAULT_TEMPLATE = {
       label: "存款轉帳",
       color: GROUP_COLORS.transfer,
       items: [
-        { id: "pocket", label: "領零用" },
+        { id: "pocket", label: "合庫轉大戶領零用" },
         { id: "mortgage", label: "新光台新(股票帳戶) 轉第一銀房貸" },
         { id: "yfTax", label: "合庫轉 永豐大戶存+稅務" },
         { id: "esunSave", label: "合庫轉 玉山數位銀行存款" },
@@ -444,27 +444,61 @@ export default function App() {
     });
   }
 
-  function addIncomeItem(label) {
+  function addIncomeItem(label, initialAmount) {
     const newId = `income_custom_${Date.now()}`;
     setTemplate((prev) => ({ ...prev, income: [...prev.income, { id: newId, label }] }));
+    if (initialAmount) {
+      ensureMonthAndUpdate(currentMonth, (d) => {
+        d.income[newId] = initialAmount;
+      });
+    }
   }
 
   function removeIncomeItem(itemId) {
     setTemplate((prev) => ({ ...prev, income: prev.income.filter((it) => it.id !== itemId) }));
   }
 
-  function addExpenseItem(groupId, label) {
+  function addExpenseItem(groupId, label, initialAmount) {
     const newId = `custom_${Date.now()}`;
     setTemplate((prev) => ({
       ...prev,
       expenseGroups: prev.expenseGroups.map((g) => (g.id === groupId ? { ...g, items: [...g.items, { id: newId, label }] } : g)),
     }));
+    if (initialAmount) {
+      ensureMonthAndUpdate(currentMonth, (d) => {
+        d.expense[newId] = initialAmount;
+      });
+    }
   }
 
   function removeExpenseItem(groupId, itemId) {
     setTemplate((prev) => ({
       ...prev,
       expenseGroups: prev.expenseGroups.map((g) => (g.id === groupId ? { ...g, items: g.items.filter((it) => it.id !== itemId) } : g)),
+    }));
+  }
+
+  const EXPENSE_GROUP_PALETTE = ["#0071E3", "#FF9F0A", "#5E5CE6", "#FF375F", "#34C759", "#8E8E93", "#00C7BE", "#AF52DE"];
+
+  function addExpenseGroup(label, initialAmount) {
+    const groupId = `group_custom_${Date.now()}`;
+    const itemId = `custom_${Date.now()}`;
+    const color = EXPENSE_GROUP_PALETTE[template.expenseGroups.length % EXPENSE_GROUP_PALETTE.length];
+    setTemplate((prev) => ({
+      ...prev,
+      expenseGroups: [...prev.expenseGroups, { id: groupId, label, color, items: [{ id: itemId, label }] }],
+    }));
+    if (initialAmount) {
+      ensureMonthAndUpdate(currentMonth, (d) => {
+        d.expense[itemId] = initialAmount;
+      });
+    }
+  }
+
+  function removeExpenseGroup(groupId) {
+    setTemplate((prev) => ({
+      ...prev,
+      expenseGroups: prev.expenseGroups.filter((g) => g.id !== groupId),
     }));
   }
 
@@ -696,6 +730,7 @@ export default function App() {
               displayIncome={displayIncome}
               displayExpense={displayExpense}
               dividendItems={displayDividendItems}
+              groupTotals={groupTotals}
               onIncomeChange={updateIncomeField}
               onExpenseChange={updateExpenseField}
               onDividendItemChange={updateDividendItem}
@@ -703,6 +738,8 @@ export default function App() {
               onRemoveIncomeItem={removeIncomeItem}
               onAddExpenseItem={addExpenseItem}
               onRemoveExpenseItem={removeExpenseItem}
+              onAddExpenseGroup={addExpenseGroup}
+              onRemoveExpenseGroup={removeExpenseGroup}
             />
           )}
           {view === "stats" && <StatsView groupTotals={groupTotals} trend={trend} />}
@@ -856,7 +893,7 @@ function AmountRow({ label, value, onChange, onRemove, note }) {
   );
 }
 
-function ReadOnlyAmountRow({ label, value, note }) {
+function ReadOnlyAmountRow({ label, value, note, onRemove }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
       <div style={{ flex: 1, overflow: "hidden" }}>
@@ -880,6 +917,11 @@ function ReadOnlyAmountRow({ label, value, note }) {
       >
         {formatMoney(value)}
       </div>
+      {onRemove && (
+        <button onClick={onRemove} aria-label="刪除項目" style={{ background: "none", border: "none", color: "#C7C7CC", cursor: "pointer", display: "flex" }}>
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -911,10 +953,12 @@ function DividendRow({ code, amount, options, onCodeChange, onAmountChange, isLa
 
 function AddItemRow({ placeholder, onAdd }) {
   const [text, setText] = useState("");
+  const [amount, setAmount] = useState("");
   function submit() {
     if (!text.trim()) return;
-    onAdd(text.trim());
+    onAdd(text.trim(), parseFloat(amount) || 0);
     setText("");
+    setAmount("");
   }
   return (
     <div style={{ display: "flex", gap: 8, padding: "10px 4px 4px" }}>
@@ -924,6 +968,13 @@ function AddItemRow({ placeholder, onAdd }) {
         onChange={(e) => setText(e.target.value)}
         placeholder={placeholder}
         style={{ flex: 1, padding: "9px 10px", borderRadius: 10, border: "1px solid #E5E5E7", fontSize: 13, boxSizing: "border-box" }}
+      />
+      <input
+        type="number"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        placeholder="NT$"
+        style={{ width: 84, padding: "9px 10px", borderRadius: 10, border: "1px solid #E5E5E7", fontSize: 13, boxSizing: "border-box", textAlign: "right" }}
       />
       <button onClick={submit} style={{ background: "#F5F5F7", border: "none", borderRadius: 10, padding: "0 12px", cursor: "pointer", display: "flex", alignItems: "center" }}>
         <Plus size={16} color="#6E6E73" />
@@ -941,6 +992,7 @@ function HomeView({
   displayIncome,
   displayExpense,
   dividendItems,
+  groupTotals,
   onIncomeChange,
   onExpenseChange,
   onDividendItemChange,
@@ -948,6 +1000,8 @@ function HomeView({
   onRemoveIncomeItem,
   onAddExpenseItem,
   onRemoveExpenseItem,
+  onAddExpenseGroup,
+  onRemoveExpenseGroup,
 }) {
   return (
     <div>
@@ -1005,8 +1059,20 @@ function HomeView({
         </div>
 
         <div className="abm-home-col-right">
+          <SectionLabel label="支出" color="#FF3B30" />
+          <ItemGroupCard>
+            {groupTotals.map((g) => (
+              <ReadOnlyAmountRow key={g.id} label={g.label} value={g.value} onRemove={() => onRemoveExpenseGroup(g.id)} />
+            ))}
+            <div style={{ display: "flex", alignItems: "center", padding: "10px 4px 6px", gap: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: "#1D1D1F" }}>支出總計</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#FF3B30" }}>NT$ {formatMoney(expenseTotal)}</span>
+            </div>
+            <AddItemRow placeholder="新增支出類別" onAdd={onAddExpenseGroup} />
+          </ItemGroupCard>
+
           {template.expenseGroups.map((group, gi) => (
-            <div key={group.id} style={{ marginTop: gi === 0 ? 0 : 20 }}>
+            <div key={group.id} style={{ marginTop: 20 }}>
               <SectionLabel label={group.label} color={group.color} />
               <ItemGroupCard>
                 {group.items.map((item) => (
@@ -1019,7 +1085,7 @@ function HomeView({
                     note={item.id === "mortgage" ? "每月 21 日扣款・由股息全額覆蓋" : undefined}
                   />
                 ))}
-                <AddItemRow placeholder={`新增${group.label}項目`} onAdd={(label) => onAddExpenseItem(group.id, label)} />
+                <AddItemRow placeholder={`新增${group.label}項目`} onAdd={(label, amount) => onAddExpenseItem(group.id, label, amount)} />
               </ItemGroupCard>
             </div>
           ))}
@@ -1121,8 +1187,8 @@ function AssetsView({ assets, onChange }) {
     onChange(assets.filter((a) => a.id !== id));
   }
 
-  function addItem(label) {
-    onChange([...assets, { id: `asset_${Date.now()}`, label, value: 0 }]);
+  function addItem(label, initialValue) {
+    onChange([...assets, { id: `asset_${Date.now()}`, label, value: initialValue || 0 }]);
   }
 
   return (
