@@ -92,7 +92,7 @@ const DEFAULT_TEMPLATE = {
       items: [
         { id: "sanshangSave", label: "三商人壽儲蓄險" },
         { id: "sanshangMed", label: "三商人壽醫療意外" },
-        { id: "smallLotStock", label: "小資零股" },
+        { id: "smallLotStock", label: "新光台新小資零股" },
       ],
     },
     {
