@@ -373,7 +373,7 @@ export default function App() {
   const displayDividendItems = seedForCurrent.dividendItems || DEFAULT_DIVIDEND_ITEMS;
   const displayDividend = useMemo(() => displayDividendItems.reduce((s, it) => s + (it.amount || 0), 0), [displayDividendItems]);
 
-  const EXCLUDED_EXPENSE_IDS = [];
+  const EXCLUDED_EXPENSE_IDS = ["esunSave"];
 
   const incomeTotal = useMemo(
     () => Object.values(displayIncome).reduce((s, v) => s + (v || 0), 0) + displayDividend,
@@ -1189,7 +1189,13 @@ function HomeView({
                     value={displayExpense[item.id]}
                     onChange={(v) => onExpenseChange(item.id, v)}
                     onRemove={() => onRemoveExpenseItem(group.id, item.id)}
-                    note={item.id === "mortgage" ? "每月 21 日扣款・由股息全額覆蓋" : undefined}
+                    note={
+                      item.id === "mortgage"
+                        ? "每月 21 日扣款・由股息全額覆蓋"
+                        : item.id === "esunSave"
+                        ? "用於處理信用卡費用・不計入實際支出"
+                        : undefined
+                    }
                     onLabelChange={(newLabel) => onRenameExpenseItem(group.id, item.id, newLabel)}
                   />
                 ))}
