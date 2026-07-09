@@ -502,6 +502,29 @@ export default function App() {
     }));
   }
 
+  function renameIncomeItem(itemId, newLabel) {
+    setTemplate((prev) => ({
+      ...prev,
+      income: prev.income.map((it) => (it.id === itemId ? { ...it, label: newLabel } : it)),
+    }));
+  }
+
+  function renameExpenseItem(groupId, itemId, newLabel) {
+    setTemplate((prev) => ({
+      ...prev,
+      expenseGroups: prev.expenseGroups.map((g) =>
+        g.id === groupId ? { ...g, items: g.items.map((it) => (it.id === itemId ? { ...it, label: newLabel } : it)) } : g
+      ),
+    }));
+  }
+
+  function renameExpenseGroup(groupId, newLabel) {
+    setTemplate((prev) => ({
+      ...prev,
+      expenseGroups: prev.expenseGroups.map((g) => (g.id === groupId ? { ...g, label: newLabel } : g)),
+    }));
+  }
+
   function deleteMonth(monthKey) {
     setMonthsData((prev) => {
       const next = { ...prev };
@@ -740,6 +763,9 @@ export default function App() {
               onRemoveExpenseItem={removeExpenseItem}
               onAddExpenseGroup={addExpenseGroup}
               onRemoveExpenseGroup={removeExpenseGroup}
+              onRenameIncomeItem={renameIncomeItem}
+              onRenameExpenseItem={renameExpenseItem}
+              onRenameExpenseGroup={renameExpenseGroup}
             />
           )}
           {view === "stats" && <StatsView groupTotals={groupTotals} trend={trend} />}
@@ -870,11 +896,78 @@ function ItemGroupCard({ children }) {
   return <div style={{ background: "#FFFFFF", borderRadius: 16, border: "1px solid #E5E5E7", padding: "6px 14px" }}>{children}</div>;
 }
 
-function AmountRow({ label, value, onChange, onRemove, note }) {
+function EditableLabel({ value, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value);
+  useEffect(() => {
+    setText(value);
+  }, [value]);
+
+  function commit() {
+    setEditing(false);
+    const trimmed = text.trim();
+    if (trimmed && trimmed !== value) {
+      onChange(trimmed);
+    } else {
+      setText(value);
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setText(value);
+            setEditing(false);
+          }
+        }}
+        style={{
+          fontSize: 13.5,
+          color: "#1D1D1F",
+          border: "1px solid #0071E3",
+          borderRadius: 6,
+          padding: "3px 6px",
+          width: "100%",
+          boxSizing: "border-box",
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      onClick={() => setEditing(true)}
+      title="點擊編輯名稱"
+      style={{
+        fontSize: 13.5,
+        color: "#1D1D1F",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        cursor: "text",
+      }}
+    >
+      {value}
+    </div>
+  );
+}
+
+function AmountRow({ label, value, onChange, onRemove, note, onLabelChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
       <div style={{ flex: 1, overflow: "hidden" }}>
-        <div style={{ fontSize: 13.5, color: "#1D1D1F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+        {onLabelChange ? (
+          <EditableLabel value={label} onChange={onLabelChange} />
+        ) : (
+          <div style={{ fontSize: 13.5, color: "#1D1D1F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+        )}
         {note && <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 1 }}>{note}</div>}
       </div>
       <span style={{ fontSize: 12.5, color: "#6E6E73" }}>NT$</span>
@@ -893,11 +986,15 @@ function AmountRow({ label, value, onChange, onRemove, note }) {
   );
 }
 
-function ReadOnlyAmountRow({ label, value, note, onRemove }) {
+function ReadOnlyAmountRow({ label, value, note, onRemove, onLabelChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
       <div style={{ flex: 1, overflow: "hidden" }}>
-        <div style={{ fontSize: 13.5, color: "#1D1D1F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+        {onLabelChange ? (
+          <EditableLabel value={label} onChange={onLabelChange} />
+        ) : (
+          <div style={{ fontSize: 13.5, color: "#1D1D1F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+        )}
         {note && <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 1 }}>{note}</div>}
       </div>
       <span style={{ fontSize: 12.5, color: "#6E6E73" }}>NT$</span>
@@ -1002,6 +1099,9 @@ function HomeView({
   onRemoveExpenseItem,
   onAddExpenseGroup,
   onRemoveExpenseGroup,
+  onRenameIncomeItem,
+  onRenameExpenseItem,
+  onRenameExpenseGroup,
 }) {
   return (
     <div>
@@ -1034,6 +1134,7 @@ function HomeView({
                 value={displayIncome[item.id]}
                 onChange={(v) => onIncomeChange(item.id, v)}
                 onRemove={template.income.length > 1 ? () => onRemoveIncomeItem(item.id) : undefined}
+                onLabelChange={(newLabel) => onRenameIncomeItem(item.id, newLabel)}
               />
             ))}
             <ReadOnlyAmountRow label="股票配息" value={dividendTotal} note="自動加總下方「股息」卡片" />
@@ -1062,7 +1163,13 @@ function HomeView({
           <SectionLabel label="支出" color="#FF3B30" />
           <ItemGroupCard>
             {groupTotals.map((g) => (
-              <ReadOnlyAmountRow key={g.id} label={g.label} value={g.value} onRemove={() => onRemoveExpenseGroup(g.id)} />
+              <ReadOnlyAmountRow
+                key={g.id}
+                label={g.label}
+                value={g.value}
+                onRemove={() => onRemoveExpenseGroup(g.id)}
+                onLabelChange={(newLabel) => onRenameExpenseGroup(g.id, newLabel)}
+              />
             ))}
             <div style={{ display: "flex", alignItems: "center", padding: "10px 4px 6px", gap: 8 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: "#1D1D1F" }}>支出總計</span>
@@ -1083,6 +1190,7 @@ function HomeView({
                     onChange={(v) => onExpenseChange(item.id, v)}
                     onRemove={() => onRemoveExpenseItem(group.id, item.id)}
                     note={item.id === "mortgage" ? "每月 21 日扣款・由股息全額覆蓋" : undefined}
+                    onLabelChange={(newLabel) => onRenameExpenseItem(group.id, item.id, newLabel)}
                   />
                 ))}
                 <AddItemRow placeholder={`新增${group.label}項目`} onAdd={(label, amount) => onAddExpenseItem(group.id, label, amount)} />
@@ -1183,6 +1291,10 @@ function AssetsView({ assets, onChange }) {
     onChange(assets.map((a) => (a.id === id ? { ...a, value: parseFloat(value) || 0 } : a)));
   }
 
+  function renameItem(id, newLabel) {
+    onChange(assets.map((a) => (a.id === id ? { ...a, label: newLabel } : a)));
+  }
+
   function removeItem(id) {
     onChange(assets.filter((a) => a.id !== id));
   }
@@ -1197,7 +1309,9 @@ function AssetsView({ assets, onChange }) {
       <div style={{ background: "#FFFFFF", borderRadius: 20, border: "1px solid #E5E5E7", overflow: "hidden", marginBottom: 16 }}>
         {assets.map((a) => (
           <div key={a.id} style={{ display: "flex", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #F0F0F2" }}>
-            <span style={{ flex: 1, fontSize: 14.5, fontWeight: 500 }}>{a.label}</span>
+            <div style={{ flex: 1, marginRight: 8 }}>
+              <EditableLabel value={a.label} onChange={(newLabel) => renameItem(a.id, newLabel)} />
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 13, color: "#6E6E73" }}>NT$</span>
               <input
