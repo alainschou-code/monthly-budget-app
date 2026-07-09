@@ -11,7 +11,7 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { Plus, Trash2, ChevronLeft, ChevronRight, Home, PieChart as PieIcon, List, Wallet, Sparkles, Send, Settings } from "lucide-react";
+import { Plus, Trash2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Home, PieChart as PieIcon, List, Wallet, Sparkles, Send, Settings } from "lucide-react";
 
 /* ---------------------------------------------------------
    Apple 官網風格色板
@@ -159,6 +159,14 @@ function findPreviousData(monthsData, monthKey) {
   const keys = Object.keys(monthsData).filter((k) => k < monthKey).sort();
   if (keys.length === 0) return null;
   return monthsData[keys[keys.length - 1]];
+}
+
+function moveArrayItem(arr, index, direction) {
+  const target = index + direction;
+  if (target < 0 || target >= arr.length) return arr;
+  const next = [...arr];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
 }
 
 function buildAIPrompt(question, contextSummary) {
@@ -525,6 +533,21 @@ export default function App() {
     }));
   }
 
+  function moveIncomeItem(index, direction) {
+    setTemplate((prev) => ({ ...prev, income: moveArrayItem(prev.income, index, direction) }));
+  }
+
+  function moveExpenseItem(groupId, index, direction) {
+    setTemplate((prev) => ({
+      ...prev,
+      expenseGroups: prev.expenseGroups.map((g) => (g.id === groupId ? { ...g, items: moveArrayItem(g.items, index, direction) } : g)),
+    }));
+  }
+
+  function moveExpenseGroup(index, direction) {
+    setTemplate((prev) => ({ ...prev, expenseGroups: moveArrayItem(prev.expenseGroups, index, direction) }));
+  }
+
   function deleteMonth(monthKey) {
     setMonthsData((prev) => {
       const next = { ...prev };
@@ -766,6 +789,9 @@ export default function App() {
               onRenameIncomeItem={renameIncomeItem}
               onRenameExpenseItem={renameExpenseItem}
               onRenameExpenseGroup={renameExpenseGroup}
+              onMoveIncomeItem={moveIncomeItem}
+              onMoveExpenseItem={moveExpenseItem}
+              onMoveExpenseGroup={moveExpenseGroup}
             />
           )}
           {view === "stats" && <StatsView groupTotals={groupTotals} trend={trend} />}
@@ -959,9 +985,33 @@ function EditableLabel({ value, onChange }) {
   );
 }
 
-function AmountRow({ label, value, onChange, onRemove, note, onLabelChange }) {
+function ReorderButtons({ onMoveUp, onMoveDown, disableUp, disableDown }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      <button
+        onClick={onMoveUp}
+        disabled={disableUp}
+        aria-label="上移"
+        style={{ background: "none", border: "none", padding: 0, height: 12, display: "flex", alignItems: "center", cursor: disableUp ? "default" : "pointer", color: disableUp ? "#E5E5E7" : "#8E8E93" }}
+      >
+        <ChevronUp size={13} />
+      </button>
+      <button
+        onClick={onMoveDown}
+        disabled={disableDown}
+        aria-label="下移"
+        style={{ background: "none", border: "none", padding: 0, height: 12, display: "flex", alignItems: "center", cursor: disableDown ? "default" : "pointer", color: disableDown ? "#E5E5E7" : "#8E8E93" }}
+      >
+        <ChevronDown size={13} />
+      </button>
+    </div>
+  );
+}
+
+function AmountRow({ label, value, onChange, onRemove, note, onLabelChange, onMoveUp, onMoveDown, disableUp, disableDown }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
+      {onMoveUp && <ReorderButtons onMoveUp={onMoveUp} onMoveDown={onMoveDown} disableUp={disableUp} disableDown={disableDown} />}
       <div style={{ flex: 1, overflow: "hidden" }}>
         {onLabelChange ? (
           <EditableLabel value={label} onChange={onLabelChange} />
@@ -986,9 +1036,10 @@ function AmountRow({ label, value, onChange, onRemove, note, onLabelChange }) {
   );
 }
 
-function ReadOnlyAmountRow({ label, value, note, onRemove, onLabelChange }) {
+function ReadOnlyAmountRow({ label, value, note, onRemove, onLabelChange, onMoveUp, onMoveDown, disableUp, disableDown }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
+      {onMoveUp && <ReorderButtons onMoveUp={onMoveUp} onMoveDown={onMoveDown} disableUp={disableUp} disableDown={disableDown} />}
       <div style={{ flex: 1, overflow: "hidden" }}>
         {onLabelChange ? (
           <EditableLabel value={label} onChange={onLabelChange} />
@@ -1102,6 +1153,9 @@ function HomeView({
   onRenameIncomeItem,
   onRenameExpenseItem,
   onRenameExpenseGroup,
+  onMoveIncomeItem,
+  onMoveExpenseItem,
+  onMoveExpenseGroup,
 }) {
   return (
     <div>
@@ -1127,7 +1181,7 @@ function HomeView({
         <div>
           <SectionLabel label="收入" color="#34C759" />
           <ItemGroupCard>
-            {template.income.map((item) => (
+            {template.income.map((item, i) => (
               <AmountRow
                 key={item.id}
                 label={item.label}
@@ -1135,6 +1189,10 @@ function HomeView({
                 onChange={(v) => onIncomeChange(item.id, v)}
                 onRemove={template.income.length > 1 ? () => onRemoveIncomeItem(item.id) : undefined}
                 onLabelChange={(newLabel) => onRenameIncomeItem(item.id, newLabel)}
+                onMoveUp={() => onMoveIncomeItem(i, -1)}
+                onMoveDown={() => onMoveIncomeItem(i, 1)}
+                disableUp={i === 0}
+                disableDown={i === template.income.length - 1}
               />
             ))}
             <ReadOnlyAmountRow label="股票配息" value={dividendTotal} note="自動加總下方「股息」卡片" />
@@ -1162,13 +1220,17 @@ function HomeView({
         <div className="abm-home-col-right">
           <SectionLabel label="支出" color="#FF3B30" />
           <ItemGroupCard>
-            {groupTotals.map((g) => (
+            {groupTotals.map((g, gi) => (
               <ReadOnlyAmountRow
                 key={g.id}
                 label={g.label}
                 value={g.value}
                 onRemove={() => onRemoveExpenseGroup(g.id)}
                 onLabelChange={(newLabel) => onRenameExpenseGroup(g.id, newLabel)}
+                onMoveUp={() => onMoveExpenseGroup(gi, -1)}
+                onMoveDown={() => onMoveExpenseGroup(gi, 1)}
+                disableUp={gi === 0}
+                disableDown={gi === groupTotals.length - 1}
               />
             ))}
             <div style={{ display: "flex", alignItems: "center", padding: "10px 4px 6px", gap: 8 }}>
@@ -1180,9 +1242,17 @@ function HomeView({
 
           {template.expenseGroups.map((group, gi) => (
             <div key={group.id} style={{ marginTop: 20 }}>
-              <SectionLabel label={group.label} color={group.color} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <SectionLabel label={group.label} color={group.color} />
+                <ReorderButtons
+                  onMoveUp={() => onMoveExpenseGroup(gi, -1)}
+                  onMoveDown={() => onMoveExpenseGroup(gi, 1)}
+                  disableUp={gi === 0}
+                  disableDown={gi === template.expenseGroups.length - 1}
+                />
+              </div>
               <ItemGroupCard>
-                {group.items.map((item) => (
+                {group.items.map((item, ii) => (
                   <AmountRow
                     key={item.id}
                     label={item.label}
@@ -1197,12 +1267,20 @@ function HomeView({
                         : undefined
                     }
                     onLabelChange={(newLabel) => onRenameExpenseItem(group.id, item.id, newLabel)}
+                    onMoveUp={() => onMoveExpenseItem(group.id, ii, -1)}
+                    onMoveDown={() => onMoveExpenseItem(group.id, ii, 1)}
+                    disableUp={ii === 0}
+                    disableDown={ii === group.items.length - 1}
                   />
                 ))}
                 <AddItemRow placeholder={`新增${group.label}項目`} onAdd={(label, amount) => onAddExpenseItem(group.id, label, amount)} />
               </ItemGroupCard>
             </div>
           ))}
+
+          <div style={{ marginTop: 20 }}>
+            <AddItemRow placeholder="新增卡片（支出類別）" onAdd={onAddExpenseGroup} />
+          </div>
         </div>
       </div>
     </div>
@@ -1309,12 +1387,17 @@ function AssetsView({ assets, onChange }) {
     onChange([...assets, { id: `asset_${Date.now()}`, label, value: initialValue || 0 }]);
   }
 
+  function moveItem(index, direction) {
+    onChange(moveArrayItem(assets, index, direction));
+  }
+
   return (
     <div>
       <h2 style={PAGE_TITLE_STYLE}>不動產</h2>
       <div style={{ background: "#FFFFFF", borderRadius: 20, border: "1px solid #E5E5E7", overflow: "hidden", marginBottom: 16 }}>
-        {assets.map((a) => (
-          <div key={a.id} style={{ display: "flex", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #F0F0F2" }}>
+        {assets.map((a, i) => (
+          <div key={a.id} style={{ display: "flex", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #F0F0F2", gap: 8 }}>
+            <ReorderButtons onMoveUp={() => moveItem(i, -1)} onMoveDown={() => moveItem(i, 1)} disableUp={i === 0} disableDown={i === assets.length - 1} />
             <div style={{ flex: 1, marginRight: 8 }}>
               <EditableLabel value={a.label} onChange={(newLabel) => renameItem(a.id, newLabel)} />
             </div>
